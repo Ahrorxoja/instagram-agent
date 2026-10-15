@@ -1,5 +1,6 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from typing import Optional
 
 class Settings(BaseSettings):
@@ -33,6 +34,13 @@ class Settings(BaseSettings):
         "Assalomu alaykum {name}! Siz Instagram sahifamizda so'rov qoldirgan edingiz. "
         "Sizga qanday yordam bera olamiz?"
     )
+
+    @field_validator("AUTO_MESSAGE_TEMPLATE", mode="after")
+    @classmethod
+    def unescape_newlines(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.replace("\\n", "\n")
+        return v
 
     model_config = SettingsConfigDict(
         env_file=".env",

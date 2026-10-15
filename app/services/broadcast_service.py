@@ -89,8 +89,8 @@ class BroadcastService:
                 failed_count += 1
                 continue
 
-            # Xabar matni
-            message_text = settings.AUTO_MESSAGE_TEMPLATE
+            # Xabar matni (agar .env dan \n escape qilingan bo'lsa to'g'ri yangi qatorga o'tkazish)
+            message_text = settings.AUTO_MESSAGE_TEMPLATE.replace("\\n", "\n")
 
             logger.info(f"[{index}/{total}] Xabar yuborilmoqda: {lead.full_name} ({recipient})")
             success = await userbot_service.send_direct_message(recipient, message_text)

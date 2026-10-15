@@ -55,8 +55,9 @@ async def process_new_lead(lead_in: LeadCreate, db: AsyncSession) -> Lead:
             recipient = db_lead.phone_number
 
         if recipient:
+            msg_text = settings.AUTO_MESSAGE_TEMPLATE.replace("\\n", "\n")
             logger.info(f"Yangi mijozga avtomatik xabar jo'natilmoqda: {recipient}")
-            success = await userbot_service.send_direct_message(recipient, settings.AUTO_MESSAGE_TEMPLATE)
+            success = await userbot_service.send_direct_message(recipient, msg_text)
             if success:
                 db_lead.message_sent = True
                 db_lead.status = "sent"

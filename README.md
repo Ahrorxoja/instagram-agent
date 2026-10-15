@@ -1,159 +1,112 @@
-# 🚀 Instagram & Telegram Mijozlarni Yig'ish va Avtomatlashtirish Tizimi
+# 🚀 Instagram Direct & Telegram Lead Automation System
 
-Ushbu tizim Instagram Direct (yoki veb-sayt / ManyChat / Make) orqali kelgan mijoz ma'lumotlarini qabul qilib, ularni **PostgreSQL / Supabase** va **Excel** faylga saqlaydi hamda **Telegram** orqali administratorga bildirishnoma va mijozga avtomatik xabar yuborish imkonini beradi.
-
----
-
-## 📌 Tizim qanday ishlaydi?
-
-```mermaid
-flowchart TD
-    IG[Instagram Direct / ManyChat / Webhook] -->|Ism, Tel, IG profil| API[FastAPI Backend]
-    API -->|1. Saqlash| DB[(Supabase / PostgreSQL)]
-    API -->|2. Qo'shish| XL[Excel: leads.xlsx]
-    API -->|3. Raqamni tekshirish| UB[Telethon Userbot]
-    API -->|4. Yangi mijoz bildirishnomasi| TG_ADMIN[Telegram Bot: Adminga xabar]
-    TG_ADMIN -->|5. Admin 'Ha, xabar yuborish' tugmasini bosadi| BOT_HANDLER[Aiogram Callback]
-    BOT_HANDLER -->|6. Mijozga avtomatik xabar jo'natish| CLIENT_TG[Mijozning Telegrami]
-```
-
-### ⚠️ Muhim texnik eslatma:
-Telegram Bot API qoidalariga ko'ra, rasmiy botlar begona shaxsning telefon raqamiga birinchi bo'lib xabar yoza olmaydi (botga avval kirib `/start` bosgan bo'lishi shart).
-Shuning uchun ushbu loyihada:
-- **Telegram Bot (aiogram 3)** — Administrator bilan muloqot qilish, bildirishnoma va "Ha / Yo'q" tugmalarini chiqarish uchun;
-- **Telegram Client / Userbot (Telethon)** — Telefon raqam egasini Telegram bazasidan topish va unga to'g'ridan-to'g'ri xabar jo'natish uchun ishlatiladi.
+Ushbu tizim **Instagram Direct** orqali yangi suhbatlarni real-time (har 15 soniyada) avtomatik kuzatib, suhbatdoshlarning profil ma'lumotlari (Bio, havola, kontakt telefon) hamda chatdagi xabarlardan **Telefon raqami** va **Telegram manzillarini** ajratib oladi. Ma'lumotlarni **SQLite / PostgreSQL** bazasiga va **Excel** fayliga saqlaydi hamda **Telegram Userbot** orqali mijozlarga avtomatik xabar jo'natadi.
 
 ---
 
-## 🛠 O'rnatish bo'yicha qo'llanma
+## 🏗 Loyiha Arxitekturasi va Tuzilishi
 
-### 1. Kutubxonalarni o'rnatish
-Virtual muhit yarating va kerakli paketlarni o'rnating:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate  # Windows uchun: venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 2. Sozlamalarni kiritish (.env)
-Loyihada `.env.example` faylidan nusxa olib, `.env` faylini yarating:
-
-```bash
-cp .env.example .env
-```
-
-`.env` faylini ochib, o'z parametrlaringizni kiriting:
-
-| O'zgaruvchi | Qayerdan olinadi? | Tavsif |
-|---|---|---|
-| `BOT_TOKEN` | [@BotFather](https://t.me/BotFather) | Telegram botingiz tokeni |
-| `ADMIN_TELEGRAM_ID` | [@userinfobot](https://t.me/userinfobot) | O'zingizning Telegram ID raqamingiz |
-| `TELEGRAM_API_ID` | [my.telegram.org](https://my.telegram.org) | Telegram API ID |
-| `TELEGRAM_API_HASH` | [my.telegram.org](https://my.telegram.org) | Telegram API Hash |
-| `TELEGRAM_PHONE` | Shaxsiy telefon | Userbot sifatida ishlaydigan akkaunt raqami |
-| `DATABASE_URL` | Supabase / PostgreSQL | Ma'lumotlar bazasi URL manzili |
-
-> **Supabase ulanish namunasi:**
-> `DATABASE_URL=postgresql+asyncpg://postgres.your_id:your_password@aws-0-eu-central-1.pooler.supabase.com:6543/postgres`
-> *(Sinov uchun SQLite ishlatmoqchi bo'lsangiz: `sqlite+aiosqlite:///./leads.db` qoldirishingiz mumkin)*
-
----
-
-### 3. Supabase / PostgreSQL jadval strukturasi (SQL)
-Agar Supabase SQL Editor orqali jadvalni qo'lda yaratmoqchi bo'lsangiz:
-
-```sql
-CREATE TABLE IF NOT EXISTS leads (
-    id SERIAL PRIMARY KEY,
-    full_name VARCHAR(255) NOT NULL,
-    instagram_username VARCHAR(255),
-    phone_number VARCHAR(50) NOT NULL,
-    telegram_id BIGINT,
-    telegram_username VARCHAR(255),
-    telegram_found BOOLEAN DEFAULT FALSE,
-    message_sent BOOLEAN DEFAULT FALSE,
-    status VARCHAR(50) DEFAULT 'pending',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone_number);
-```
-*(Dastur ishga tushganda SQLAlchemy jadvallarni avtomatik ham yaratadi)*
-
----
-
-### 4. Telethon (Userbot) sessiyasini birinchi marta faollashtirish
-Raqam egasiga to'g'ridan-to'g'ri xabar yuborish uchun quyidagi buyruqni bir marta ishga tushiring va Telegramdan kelgan SMS/kodni kiriting:
-
-```bash
-python -m app.services.telegram_service
-```
-Sessiya fayli (`userbot_session.session`) avtomatik saqlanadi.
-
----
-
-### 5. Tizimni to'liq ishga tushirish
-FastAPI serveri va Telegram botni bir vaqtda ishga tushirish uchun:
-
-```bash
-python run.py
-```
-
-Server ishga tushgach:
-- **FastAPI Hujjatlari (Swagger UI):** `http://localhost:8000/docs`
-- **Excel fayl:** `leads.xlsx` (avtomatik yaratiladi)
-- **Telegram Bot:** Sizga yangi mijozlar haqida xabar jo'natishga tayyor holatda bo'ladi.
-
----
-
-## 📡 API va Webhook orqali mijoz qo'shish
-
-### 1. To'g'ridan-to'g'ri API (`POST /api/leads`)
-```bash
-curl -X POST "http://localhost:8000/api/leads" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "full_name": "Aziz Rahimov",
-       "instagram_username": "aziz_rahimov",
-       "phone_number": "+998901234567"
-     }'
-```
-
-### 2. Instagram Direct / ManyChat Webhook (`POST /webhook/instagram`)
-ManyChat yoki Make (Integromat) orqali ushbu webhook URL manziliga JSON yuborish kifoya.
-
-### 3. Sinov skripti
-Tizimni sinab ko'rish uchun maxsus skript:
-```bash
-python test_lead.py
-```
-
----
-
-## 📂 Loyiha tuzilishi
-
-```
+```text
+instagram-agent/
+│
 ├── app/
-│   ├── bot/
-│   │   ├── bot.py             # Aiogram bot obyektlari va bildirishnomalar
-│   │   ├── handlers.py        # Admin komandalari va "Ha/Yo'q" tugmalari
-│   │   └── keyboards.py       # Inline tugmalar
-│   ├── services/
-│   │   ├── excel_service.py   # Excelga saqlash va yangilash
-│   │   ├── lead_service.py    # Yangi lead to'liq siklini boshqarish
-│   │   └── telegram_service.py# Telethon userbot (raqamni tekshirish va xabar yozish)
-│   ├── config.py              # Sozlamalar (.env)
-│   ├── database.py            # Supabase / PostgreSQL ulanishi
-│   ├── models.py              # SQLAlchemy jadvallari
-│   ├── schemas.py             # Pydantic schemalari
-│   └── main.py                # FastAPI endpoints
-├── .env.example
-├── .gitignore
-├── requirements.txt
-├── test_lead.py               # Sinov skripti
-└── run.py                     # Dasturni ishga tushiruvchi markaziy fayl
+│   ├── bot/                      # Aiogram 3 Telegram Bot moduli (Admin boshqaruvi)
+│   │   ├── bot.py                # Bot obyekti, Dispatcher va adminga bildirishnoma yuboruvchi
+│   │   ├── handlers.py           # Admin buyruqlari (/send_all, /scan, /excel, /stats)
+│   │   └── keyboards.py          # Inline tugmalar (Telegramda ochish, Telefon qilindi)
+│   │
+│   ├── services/                 # Asosiy biznes mantiq xizmatlari
+│   │   ├── instagram_service.py  # Instagram hisobiga ulanish va Direct chatlarni real-time kuzatish
+│   │   ├── parser_service.py     # Regex parser: bio va chatdan telefon va Telegramni ajratish
+│   │   ├── telegram_service.py   # Telethon Userbot: raqamni Telegramda tekshirish va xabar yozish
+│   │   ├── broadcast_service.py  # Ommaviy xavfsiz xabar tarqatish (35s delay, anti-spam)
+│   │   ├── excel_service.py      # OpenPyXL: Dropdown list bilan leads.xlsx yuritish
+│   │   └── lead_service.py       # Yangi lead to'liq siklini boshqarish
+│   │
+│   ├── config.py                 # Pydantic-settings orqali .env konfiguratsiyasini yuklash
+│   ├── database.py               # SQLAlchemy asinxron ma'lumotlar bazasi ulanishi
+│   ├── models.py                 # Ma'lumotlar bazasi modellari (Lead jadvali)
+│   ├── schemas.py                # Pydantic schemalari va ma'lumotlar validatsiyasi
+│   └── main.py                   # FastAPI REST API va Webhook serveri
+│
+├── .env                          # Maxfiy sozlamalar (tokenlar, loginlar, parollar)
+├── .env.example                  # Namuna konfiguratsiya fayli
+├── .gitignore                    # Git uchun istisnolar (sessiyalar, baza, env)
+├── requirements.txt              # Kerakli Python kutubxonalari
+├── run.py                        # FastAPI + Telegram Bot + Instagram Watcherni parallel yurgizuvchi
+├── test_lead.py                  # API ni test qilish skripti
+├── DEPLOY.md                     # Serverga o'rnatish va 24/7 sozlash qo'llanmasi
+└── README.md                     # Ushbu hujjat
 ```
 
-# instagram-agent
+---
+
+## 🧩 Kod Qismlari va Vazifalari
+
+### 1. `app/services/instagram_service.py` (Instagram Direct Kuzatuvchi)
+* `instagrapi` orqali Instagram hisobingizga (`stolda.uz`) bir marta kiradi va sessiyani `instagram_session.json` ga saqlaydi (qayta parol so'ramaydi).
+* Fon jarayonida har 15 soniyada Direct'dagi eng so'nggi suhbatlarni tekshiradi.
+* Siz Instagramda yangi odamga yozganingizda yoki sizga javob kelganda:
+  1. Suhbatdoshning profili (Bio, havolalari, kontaktdagi telefon) va chat matnini ko'radi;
+  2. Telefon yoki Telegram topilsa — **bir zumda bazaga saqlaydi**;
+  3. Excel faylga yangi qator qilib qo'shadi;
+  4. Adminga Telegram bot orqali xabar beradi;
+  5. Agar `INSTAGRAM_AUTO_SEND=true` bo'lsa — uning Telegramiga darhol andoza xabarni yuboradi!
+
+### 2. `app/services/parser_service.py` (Matn Tahlilchisi)
+* O'zbekiston (`+998...`) va xalqaro telefon raqamlarni istalgan formatdan (`+998 90 123 45 67`, `90 123-45-67`, `99890...`) aniqlab, toza xalqaro ko'rinishga keltiradi.
+* Telegram havolalarini (`t.me/username`, `telegram.me/...`, `@username`) matndan ajratib oladi.
+
+### 3. `app/services/telegram_service.py` (Telethon Userbot)
+* Rasmiy Telegram Bot API begona raqamga birinchi bo'lib yozolmaydi. Shu sababli bu modul **Telethon (MTProto Client)** orqali ishlaydi.
+* Shaxsiy / ishchi raqamingiz nomidan mijozning Telegramiga to'g'ridan-to'g'ri xabar jo'natadi.
+
+### 4. `app/services/broadcast_service.py` (Xavfsiz Xabar Tarqatuvchi)
+* Bazadagi barcha hali xabar bormagan (`message_sent == False`) mijozlarga ketma-ket xabar jo'natadi.
+* **Anti-Spam Himoyasi:** Har bir xabar orasida **35 soniya aqlli tanaffus** qo'yilgan. Akkauntingiz Telegram tomonidan spam deb bloklanmaydi.
+* Adminga har 5 ta mijozda jonli progress hisobotini berib boradi.
+* Bitta odamga **hech qachon 2 marta xabar bormaydi** (duplikatdan 100% himoya).
+
+### 5. `app/services/excel_service.py` (Excel Boshqaruvchisi)
+* `leads.xlsx` faylini yaratadi va yuritadi.
+* **DataValidation (Dropdown list):**
+  - "Xabar yuborildi" ustuni — `[ Ha / Yo'q ]` tanlovli ro'yxat;
+  - "Telefon qilindi" ustuni — `[ Ha / Yo'q ]` tanlovli ro'yxat;
+  - "Holati" ustuni — `[ Yangi, Bog'lanildi, Rad etildi, Sotildi ]` ro'yxati.
+* Ustun kengliklari va sarlavhalari avtomatik chiroyli formatlanadi.
+
+---
+
+## 🤖 Telegram Bot Buyruqlari (`@Stoldainstabot`)
+
+Telegram botingiz menyusida quyidagi qulay buyruqlar mavjud:
+
+| Buyruq | Tavsif |
+|---|---|
+| **`/send_all`** | 🚀 Bazadagi barcha hali xabar olmagan mijozlarga xavfsiz (35s interval bilan) avtomatik xabar jo'natishni boshlash. |
+| **`/scan`** | 🔍 Instagram Direct'dagi oxirgi 100 ta suhbatni chuqur skanerlash. *(Masalan: `/scan 200` yoki `/scan 500` qilib ko'proq tekshirish mumkin).* |
+| **`/excel`** | 📑 Eng so'nggi yangilangan `leads.xlsx` faylini to'g'ridan-to'g'ri Telegram chatga yuklab beradi. |
+| **`/stats`** | 📊 Jami mijozlar, telefon qilinganlar va xabar yuborilganlar statistikasi. |
+| **`/stop_send`** | 🛑 Xabar tarqatish jarayonini darhol to'xtatish. |
+| **`/help`** | ℹ️ Botdan foydalanish bo'yicha to'liq qo'llanma. |
+
+---
+
+## 🔔 Xabar Kelgandagi Tugmalar:
+Har bir mijoz ma'lumoti kelganda uning ostida:
+1. **`📱 Telegramda yozish`** — bitta bosishda mijoz bilan shaxsiy chat ochiladi.
+2. **`📞 Telefon qilindi`** — qo'ng'iroq qilgach bosasiz, Excelda avtomatik "Ha" bo'lib belgilanadi.
+3. **`📸 Instagram`** — mijozning Instagram profiliga to'g'ridan-to'g'ri havola.
+4. **`❌ Kerak emas`** — rad etish.
+
+---
+
+## ⚙️ Sozlamalar (.env)
+Barcha konfiguratsiyalar [.env](file:///Users/ahrorxojausmonxojayev/Development/bots/instagram%20agent/.env) faylida saqlanadi:
+* `BOT_TOKEN` — Admin bilan muloqot qiluvchi Telegram bot tokeni.
+* `ADMIN_TELEGRAM_ID` — Administrator Telegram ID raqami.
+* `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` — Userbot API kalitlari.
+* `TELEGRAM_PHONE` — Xabar jo'natuvchi Telegram raqami.
+* `INSTAGRAM_USERNAME` / `INSTAGRAM_PASSWORD` — Instagram login va paroli.
+* `INSTAGRAM_AUTO_SEND=true` — Yangi odam topilishi bilan avtomat xabar yuborish rejimi.
+* `AUTO_MESSAGE_TEMPLATE` — Mijozlarga boradigan andoza matn.

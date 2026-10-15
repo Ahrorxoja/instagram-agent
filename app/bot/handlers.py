@@ -181,7 +181,11 @@ async def handle_send_message_callback(callback: CallbackQuery):
             await callback.message.reply("⚠️ Bu mijozga allaqachon xabar yuborilgan.")
             return
 
-        message_text = settings.AUTO_MESSAGE_TEMPLATE.format(name=lead.full_name)
+        raw_template = settings.AUTO_MESSAGE_TEMPLATE.replace("\\n", "\n")
+        try:
+            message_text = raw_template.format(name=lead.full_name)
+        except Exception:
+            message_text = raw_template
         recipient = lead.telegram_id if lead.telegram_id else lead.phone_number
 
         success = await userbot_service.send_direct_message(recipient, message_text)
