@@ -188,7 +188,7 @@ async def handle_send_message_callback(callback: CallbackQuery):
             message_text = raw_template
         recipient = lead.telegram_id if lead.telegram_id else lead.phone_number
 
-        success = await userbot_service.send_direct_message(recipient, message_text)
+        success = await userbot_service.send_direct_message(recipient, message_text, name=lead.full_name)
 
         if success:
             lead.message_sent = True

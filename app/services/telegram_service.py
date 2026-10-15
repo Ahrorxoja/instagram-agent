@@ -74,9 +74,10 @@ class TelegramUserbotService:
             logger.error(f"Raqamni tekshirishda xatolik yuz berdi ({phone}): {e}")
             return False, None, None
 
-    async def send_direct_message(self, recipient: str | int, text: str) -> bool:
+    async def send_direct_message(self, recipient: str | int, text: str, name: str = "Lead") -> bool:
         """
         Telegram foydalanuvchisiga (ID, username yoki telefon raqam) to'g'ridan-to'g'ri xabar yuborish.
+        Agar raqam bo'lsa va to'g'ridan-to'g'ri topilmasa, avtomatik ravishda kontakt sifatida tekshirib yuboradi.
         """
         if not self._is_ready or not self.client:
             logger.error("Telethon faol emas! Xabar yuborib bo'lmadi.")
@@ -87,6 +88,29 @@ class TelegramUserbotService:
             logger.info(f"Xabar muvaffaqiyatli yuborildi: {recipient}")
             return True
         except Exception as e:
+            # Agar raqam bo'lsa, kontakt sifatida qo'shib urinib ko'ramiz
+            recipient_str = str(recipient).strip()
+            if recipient_str.startswith("+") or (recipient_str.isdigit() and len(recipient_str) > 7):
+                try:
+                    clean_phone = recipient_str.replace("+", "").replace(" ", "").replace("-", "").strip()
+                    contact = InputPhoneContact(client_id=0, phone=clean_phone, first_name=name[:15] if name else "Lead", last_name="")
+                    result = await self.client(ImportContactsRequest([contact]))
+                    if result.users:
+                        user = result.users[0]
+                        await self.client.send_message(user, text)
+                        logger.info(f"Xabar kontakt orqali muvaffaqiyatli yuborildi: {recipient} (ID: {user.id})")
+                        try:
+                            await self.client(DeleteContactsRequest(id=[user.id]))
+                        except Exception:
+                            pass
+                        return True
+                    else:
+                        logger.warning(f"Raqam {recipient} Telegramda ro'yxatdan o'tmagan.")
+                        return False
+                except Exception as import_err:
+                    logger.error(f"Kontakt orqali yuborishda xatolik ({recipient}): {import_err}")
+                    return False
+
             logger.error(f"Xabar yuborishda xatolik ({recipient}): {e}")
             return False
 

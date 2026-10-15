@@ -93,7 +93,7 @@ class BroadcastService:
             message_text = settings.AUTO_MESSAGE_TEMPLATE.replace("\\n", "\n")
 
             logger.info(f"[{index}/{total}] Xabar yuborilmoqda: {lead.full_name} ({recipient})")
-            success = await userbot_service.send_direct_message(recipient, message_text)
+            success = await userbot_service.send_direct_message(recipient, message_text, name=lead.full_name)
 
             async with AsyncSessionLocal() as session:
                 lead_to_update = await session.get(Lead, lead.id)
