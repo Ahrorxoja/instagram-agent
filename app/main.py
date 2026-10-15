@@ -1,0 +1,162 @@
+import os
+import logging
+from contextlib import asynccontextmanager
+from typing import List, Optional
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from app.config import settings
+from app.database import init_db, get_db
+from app.models import Lead
+from app.schemas import LeadCreate, LeadResponse
+from app.services.lead_service import process_new_lead
+from app.services.telegram_service import userbot_service
+from app.services.excel_service import ensure_excel_file
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Dastur ishga tushganda
+    logger.info("Server ishga tushmoqda...")
+    await init_db()
+    ensure_excel_file()
+    await userbot_service.initialize()
+    yield
+    # Dastur to'xtaganda
+    logger.info("Server to'xtatilmoqda...")
+    await userbot_service.disconnect()
+
+app = FastAPI(
+    title="Instagram & Telegram Lead Automation API",
+    description="Instagramdan mijozlar ma'lumotlarini yig'ish, bazaga va Excelga saqlash hamda Telegram orqali xabar yuborish tizimi",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health", tags=["Status"])
+async def health_check():
+    return {
+        "status": "ok",
+        "userbot_ready": userbot_service._is_ready,
+        "database": "connected"
+    }
+
+@app.post("/api/leads", response_model=LeadResponse, status_code=status.HTTP_201_CREATED, tags=["Leads"])
+async def create_lead(
+    lead_in: LeadCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Yangi mijoz ma'lumotlarini qabul qilish:
+    - Baza (Supabase/PostgreSQL)ga saqlaydi
+    - Telegramda telefon raqamni tekshiradi
+    - Excel faylga qo'shadi
+    - Telegram bot orqali adminga xabar va inline tugma chiqaradi
+    """
+    try:
+        created_lead = await process_new_lead(lead_in, db)
+        return created_lead
+    except Exception as e:
+        logger.error(f"Lead qabul qilishda xatolik: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/webhook/instagram", tags=["Webhooks"])
+async def instagram_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Instagram Direct / ManyChat / Make / Zapier webhooklarini qabul qilish uchun moslashuvchan endpoint.
+    Har xil JSON formatidagi ma'lumotlarni o'zi taniy oladi.
+    """
+    try:
+        body = await request.json()
+        logger.info(f"Webhook ma'lumot qabul qilindi: {body}")
+
+        # Maydonlarni turli nomlar bo'yicha qidirish
+        full_name = (
+            body.get("full_name") or
+            body.get("name") or
+            body.get("first_name", "") + " " + body.get("last_name", "")
+        ).strip() or "Instagram Mijoz"
+
+        instagram_username = (
+            body.get("instagram_username") or
+            body.get("username") or
+            body.get("ig_username") or
+            body.get("instagram")
+        )
+
+        phone_number = (
+            body.get("phone_number") or
+            body.get("phone") or
+            body.get("contact_phone")
+        )
+
+        if not phone_number:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Telefon raqam (phone_number) topilmadi"}
+            )
+
+        lead_data = LeadCreate(
+            full_name=full_name,
+            instagram_username=instagram_username,
+            phone_number=str(phone_number)
+        )
+
+        created_lead = await process_new_lead(lead_data, db)
+        return {
+            "success": True,
+            "lead_id": created_lead.id,
+            "status": created_lead.status,
+            "telegram_found": created_lead.telegram_found
+        }
+    except Exception as e:
+        logger.error(f"Webhook qayta ishlashda xatolik: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )
+
+@app.get("/api/leads", response_model=List[LeadResponse], tags=["Leads"])
+async def get_all_leads(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """Barcha mijozlar ro'yxatini olish"""
+    result = await db.execute(
+        select(Lead).order_by(Lead.id.desc()).offset(skip).limit(limit)
+    )
+    return result.scalars().all()
+
+@app.get("/api/leads/export-excel", tags=["Leads"])
+async def export_leads_excel():
+    """Yig'ilgan mijozlar Excel faylini (.xlsx) yuklab olish"""
+    file_path = settings.EXCEL_FILE_PATH
+    if not os.path.exists(file_path):
+        ensure_excel_file()
+
+    return FileResponse(
+        path=file_path,
+        filename="instagram_mijozlar.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+

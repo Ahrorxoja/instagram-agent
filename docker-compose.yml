@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    container_name: instagram_agent
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./leads.xlsx:/app/leads.xlsx
+      - ./leads.db:/app/leads.db
+      - ./userbot_session.session:/app/userbot_session.session
+

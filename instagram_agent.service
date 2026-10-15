@@ -1,0 +1,16 @@
+[Unit]
+Description=Instagram and Telegram Lead Automation Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/instagram_agent
+ExecStart=/root/instagram_agent/venv/bin/python run.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/root/instagram_agent/.env
+
+[Install]
+WantedBy=multi-user.target
+

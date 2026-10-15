@@ -1,0 +1,12 @@
+.env
+*.session
+*.session-journal
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+leads.xlsx
+*.db
+.DS_Store
+
