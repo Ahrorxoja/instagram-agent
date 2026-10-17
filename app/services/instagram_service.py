@@ -32,6 +32,7 @@ class InstagramWatcherService:
             from instagrapi import Client
             self.cl = Client()
             self.cl.delay_range = [1, 2]
+            self.cl.request_timeout = 15
 
             # Sessiya fayli mavjud bo'lsa, undan yuklash
             if os.path.exists(self.session_file):
@@ -89,7 +90,17 @@ class InstagramWatcherService:
             return 0
 
         loop = asyncio.get_event_loop()
-        threads = await loop.run_in_executor(None, self._fetch_threads, amount)
+        try:
+            threads = await asyncio.wait_for(
+                loop.run_in_executor(None, self._fetch_threads, amount),
+                timeout=25.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Direct suhbatlarni olishda timeout yuz berdi. Keyingi siklda qayta uriniladi.")
+            return 0
+        except Exception as e:
+            logger.error(f"Direct suhbatlarni olishda xatolik: {e}")
+            return 0
 
         if not threads:
             return 0
@@ -112,6 +123,13 @@ class InstagramWatcherService:
             username = target_user.username
             full_name = target_user.full_name or username
 
+            # Chatdagi xabarlar matnini yig'ish
+            chat_texts = []
+            for msg in thread.messages[:10]:
+                if msg.text:
+                    chat_texts.append(msg.text)
+            combined_chat_text = "\n".join(chat_texts)
+
             # 1. Tezkor tekshirish: Bu mijoz allaqachon bazada bormi?
             async with AsyncSessionLocal() as session:
                 stmt = select(Lead).where(
@@ -120,21 +138,34 @@ class InstagramWatcherService:
                 )
                 existing = (await session.execute(stmt)).scalar_one_or_none()
 
-            # Agar allaqachon bazada bo'lsa, uning profilini yuklab vaqt sarflamaymiz!
             if existing:
+                # Agar mijoz bazada bo'lsa, lekin raqami yo'q bo'lsa va chatda raqam qoldirgan bo'lsa:
+                if existing.phone_number in ("Ko'rsatilmagan", None, "") and combined_chat_text:
+                    new_phone, new_tg = extract_phone_and_telegram(combined_chat_text)
+                    if new_phone:
+                        clean_new_phone = clean_phone_number(new_phone)
+                        async with AsyncSessionLocal() as session:
+                            db_lead = await session.get(Lead, existing.id)
+                            if db_lead:
+                                db_lead.phone_number = clean_new_phone
+                                if new_tg:
+                                    db_lead.telegram_username = new_tg
+                                await session.commit()
+                                logger.info(f"Mavjud lead yangi telefon raqami bilan yangilandi: @{username} ({clean_new_phone})")
                 continue
 
             logger.info(f"🔍 Yangi suhbatdosh tekshirilmoqda: @{username}")
 
-            # Chatdagi xabarlar matnini yig'ish
-            chat_texts = []
-            for msg in thread.messages[:10]:
-                if msg.text:
-                    chat_texts.append(msg.text)
-            combined_chat_text = "\n".join(chat_texts)
-
             # Profil ma'lumotlarini olish (Bio, linklar)
-            user_info = await loop.run_in_executor(None, self._get_user_info_sync, target_user.pk)
+            user_info = None
+            try:
+                user_info = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._get_user_info_sync, target_user.pk),
+                    timeout=15.0
+                )
+            except Exception as e:
+                logger.debug(f"User info olishda xatolik (@{username}): {e}")
+
             bio = ""
             external_url = ""
             public_phone = None
@@ -151,25 +182,24 @@ class InstagramWatcherService:
             parsed_phone, parsed_tg = extract_phone_and_telegram(all_text, external_url)
             phone = public_phone or parsed_phone
 
-            # Agar telefon yoki telegram topilsa — DARHOL bazaga va adminga yuboramiz!
-            if phone or parsed_tg:
-                clean_phone = clean_phone_number(phone) if phone else "Ko'rsatilmagan"
+            # Barcha yangi Direct suhbatlarni DARHOL bazaga va adminga yuboramiz!
+            clean_phone = clean_phone_number(phone) if phone else "Ko'rsatilmagan"
 
-                async with AsyncSessionLocal() as session:
-                    lead_in = LeadCreate(
-                        full_name=full_name,
-                        instagram_username=username,
-                        phone_number=clean_phone
-                    )
-                    created_lead = await process_new_lead(lead_in, session)
-                    created_lead.instagram_pk = user_pk
-                    if parsed_tg:
-                        created_lead.telegram_username = parsed_tg
-                        created_lead.telegram_found = True
-                    await session.commit()
-                    new_leads_count += 1
+            async with AsyncSessionLocal() as session:
+                lead_in = LeadCreate(
+                    full_name=full_name,
+                    instagram_username=username,
+                    phone_number=clean_phone
+                )
+                created_lead = await process_new_lead(lead_in, session)
+                created_lead.instagram_pk = user_pk
+                if parsed_tg:
+                    created_lead.telegram_username = parsed_tg
+                    created_lead.telegram_found = True
+                await session.commit()
+                new_leads_count += 1
 
-                logger.info(f"🔥 DARHOL QAYTA ISHLANDI: @{username} (Tel: {clean_phone}, TG: {parsed_tg})")
+            logger.info(f"🔥 DARHOL QAYTA ISHLANDI: @{username} (Tel: {clean_phone}, TG: {parsed_tg})")
 
         return new_leads_count
 
