@@ -71,6 +71,10 @@ class InstagramWatcherService:
         try:
             return self.cl.direct_threads(amount=amount)
         except Exception as e:
+            err_msg = str(e).lower()
+            if "login_required" in err_msg or "unauthorized" in err_msg:
+                logger.warning("Instagram sessiyasi eskirganligi sezildi. Avtomatik qayta ulanmoqda...")
+                self.login_sync()
             logger.error(f"Direct suhbatlarni olishda xatolik: {e}")
             return []
 
@@ -206,18 +210,27 @@ class InstagramWatcherService:
     async def start_polling(self):
         """Direct xabarlarni doimiy kuzatib boruvchi tezkor fon sikli (har 15 soniyada eng so'nggi chatlar)"""
         if not self._is_logged_in:
-            logger.warning("Instagramga kirmaganligi sababli kuzatuvchi boshlanmadi.")
-            return
+            logger.warning("Instagramga kirmaganligi sababli kuzatuvchi boshlanmadi. 30 soniyadan keyin qayta ulanadi.")
+            await asyncio.sleep(30)
+            await self.initialize()
 
         self._running = True
         logger.info("Instagram Direct tezkor kuzatuvchi ishga tushdi (Har 15 soniyada eng yangi suhbatlar).")
+        consecutive_errors = 0
 
         while self._running:
             try:
                 # Yangi suhbatlarni tezkor ushlash uchun oxirgi 10 ta suhbat yetarli
                 await self.scan_and_process(amount=10)
+                consecutive_errors = 0
             except Exception as e:
-                logger.error(f"Kuzatuv siklida xatolik: {e}")
+                consecutive_errors += 1
+                logger.error(f"Kuzatuv siklida xatolik ({consecutive_errors}-marta): {e}")
+                if consecutive_errors >= 5:
+                    logger.warning("Ketma-ket 5 ta xatolik! Instagram sessiyasi qayta yangilanmoqda...")
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self.login_sync)
+                    consecutive_errors = 0
 
             await asyncio.sleep(15)
 
