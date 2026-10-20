@@ -76,20 +76,64 @@ async def create_lead(
         logger.error(f"Lead qabul qilishda xatolik: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/webhook/instagram", tags=["Webhooks"])
+async def verify_instagram_webhook(request: Request):
+    """
+    Meta (Facebook/Instagram) Webhook tekshiruvi (hub.challenge / hub.verify_token)
+    """
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    verify_token = getattr(settings, "INSTAGRAM_VERIFY_TOKEN", "stolda_webhook_secret_2026")
+
+    if mode == "subscribe" and token == verify_token:
+        logger.info("Meta Webhook muvaffaqiyatli tasdiqlandi!")
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(content=challenge, status_code=200)
+
+    logger.warning(f"Meta Webhook tasdiqlashda xato: mode={mode}, token={token}")
+    raise HTTPException(status_code=403, detail="Verification token mismatch")
+
 @app.post("/webhook/instagram", tags=["Webhooks"])
 async def instagram_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Instagram Direct / ManyChat / Make / Zapier webhooklarini qabul qilish uchun moslashuvchan endpoint.
-    Har xil JSON formatidagi ma'lumotlarni o'zi taniy oladi.
+    Instagram Direct / Meta Webhook / ManyChat / Make / Zapier webhooklarini qabul qilish.
     """
     try:
         body = await request.json()
         logger.info(f"Webhook ma'lumot qabul qilindi: {body}")
 
-        # Maydonlarni turli nomlar bo'yicha qidirish
+        # 1. Meta rasmiy formati: {"object": "instagram", "entry": [...]}
+        if body.get("object") == "instagram":
+            for entry in body.get("entry", []):
+                for messaging in entry.get("messaging", []):
+                    sender_id = messaging.get("sender", {}).get("id")
+                    message = messaging.get("message", {})
+                    msg_text = message.get("text", "")
+                    
+                    if msg_text:
+                        from app.services.parser_service import extract_phone_and_telegram, clean_phone_number
+                        parsed_phone, parsed_tg = extract_phone_and_telegram(msg_text)
+                        clean_phone = clean_phone_number(parsed_phone) if parsed_phone else "Ko'rsatilmagan"
+
+                        lead_data = LeadCreate(
+                            full_name=f"Instagram User {sender_id}",
+                            instagram_username=str(sender_id),
+                            phone_number=clean_phone
+                        )
+                        created_lead = await process_new_lead(lead_data, db)
+                        created_lead.instagram_pk = str(sender_id)
+                        if parsed_tg:
+                            created_lead.telegram_username = parsed_tg
+                        await db.commit()
+            return {"status": "ok"}
+
+        # 2. ManyChat / Make / oddiy JSON formati
         full_name = (
             body.get("full_name") or
             body.get("name") or
